@@ -1,5 +1,3 @@
-github.com/aosedge/aos_common v0.0.0-20240807131318-ec6baf1da16c h1:+syptKk0KtaFuttYpoUW4VF4eUciUxP5VFeFDDcDNkA=
-github.com/aosedge/aos_common v0.0.0-20240807131318-ec6baf1da16c/go.mod h1:CG/e1tQPMo2fvdwRHi+Cx5StpNURu7InTZSgyfmBVYM=
 github.com/aosedge/crypto11 v1.0.3-0.20220217163524-ddd0ace39e6f h1:xL5hA9axQFHnoVVF/Q8CkKl9JiTvA7U72jRDltMBB9M=
 github.com/aosedge/crypto11 v1.0.3-0.20220217163524-ddd0ace39e6f/go.mod h1:ILDKtnCKiQ7zRoNxcp36Y1ZR8LBPmR2E23+wTQe/MlE=
 github.com/aosedge/fsquota v0.0.0-20231127111317-842d831105a7 h1:KR+SuYXJ9HigUaJdUwRlkDOOpkCrliFF3liBVKu2GKY=
@@ -52,6 +50,8 @@ github.com/miekg/pkcs11 v1.0.3-0.20190429190417-a667d056470f h1:eVB9ELsoq5ouItQB
 github.com/miekg/pkcs11 v1.0.3-0.20190429190417-a667d056470f/go.mod h1:XsNlhZGX73bx86s2hdc/FuaLm2CPZJemRLMA+WTFxgs=
 github.com/moby/sys/mountinfo v0.7.1 h1:/tTvQaSJRr2FshkhXiIpux6fQ2Zvc4j7tAhMTStAG2g=
 github.com/moby/sys/mountinfo v0.7.1/go.mod h1:IJb6JQeOklcdMU9F5xQ8ZALD+CUr5VlGpwtX+VE0rpI=
+github.com/mykola-kobets-epam/aos_common v0.0.0-20241017100128-28f12a3784a3 h1:K3XqoVL2Wd+OKoVMViKAFlJcmqihC/K1JvJSDEL7Ysk=
+github.com/mykola-kobets-epam/aos_common v0.0.0-20241017100128-28f12a3784a3/go.mod h1:8KL7yztgvArj3vpII9hnaAbebP4dP/7pox/vCLXW/cw=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.0.2 h1:9yCKha/T5XdGtO0q9Q9a6T5NUCsTn/DrBg0D7ufOcFM=
