@@ -18,17 +18,15 @@
 package iamclient
 
 import (
-	"context"
+	"sync"
 	"time"
 
 	"github.com/aosedge/aos_common/aoserrors"
 	pb "github.com/aosedge/aos_common/api/iamanager"
 	"github.com/aosedge/aos_common/utils/cryptutils"
-	"github.com/golang/protobuf/ptypes/empty"
+	"github.com/aosedge/aos_common/utils/grpchelpers"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/aosedge/aos_updatemanager/config"
 )
@@ -37,7 +35,10 @@ import (
  * Consts
  **********************************************************************************************************************/
 
-const iamRequestTimeout = 30 * time.Second
+const (
+	iamRequestTimeout    = 30 * time.Second
+	iamReconnectInterval = 10 * time.Second
+)
 
 /***********************************************************************************************************************
  * Types
@@ -45,8 +46,21 @@ const iamRequestTimeout = 30 * time.Second
 
 // Client IAM client instance.
 type Client struct {
+	*grpchelpers.IAMPublicServiceClient
+	sync.Mutex
+
+	config        *config.Config
+	cryptocontext *cryptutils.CryptoContext
+	insecure      bool
+
 	connection *grpc.ClientConn
-	service    pb.IAMPublicServiceClient
+
+	tlsCertChan      <-chan *pb.CertInfo
+	closeChannel     chan struct{}
+	disableReconnect bool
+	reconnectChannel chan struct{}
+
+	reconnectTimer *time.Timer
 }
 
 /***********************************************************************************************************************
@@ -55,11 +69,16 @@ type Client struct {
 
 // New creates new IAM client.
 func New(config *config.Config, cryptocontext *cryptutils.CryptoContext, insecure bool) (client *Client, err error) {
-	client = &Client{}
+	client = &Client{
+		IAMPublicServiceClient: grpchelpers.NewIAMPublicServiceClient(iamRequestTimeout),
 
-	if client.connection, client.service, err = client.createConnection(
-		cryptocontext, config.IAMPublicServerURL, insecure); err != nil {
-		return client, err
+		config:        config,
+		cryptocontext: cryptocontext,
+		insecure:      insecure,
+
+		tlsCertChan:      make(<-chan *pb.CertInfo),
+		closeChannel:     make(chan struct{}, 1),
+		reconnectChannel: make(chan struct{}, 1),
 	}
 
 	defer func() {
@@ -68,93 +87,133 @@ func New(config *config.Config, cryptocontext *cryptutils.CryptoContext, insecur
 		}
 	}()
 
+	if err = client.openGRPCConnection(); err != nil {
+		return nil, aoserrors.Wrap(err)
+	}
+
+	if !insecure {
+		if ch, err := client.SubscribeCertChanged(config.CertStorage); err != nil {
+			return nil, aoserrors.Wrap(err)
+		} else {
+			client.tlsCertChan = ch
+		}
+	}
+
+	go client.processEvents()
+
 	return client, nil
 }
 
 // Close closes IAM client.
 func (client *Client) Close() error {
-	if client.connection != nil {
-		if err := client.connection.Close(); err != nil {
-			return aoserrors.Wrap(err)
-		}
+	client.Lock()
+	defer client.Unlock()
 
-		log.Debug("Disconnected from IAM")
+	client.disableReconnect = true
+
+	client.closeChannel <- struct{}{}
+
+	if client.reconnectTimer != nil {
+		client.reconnectTimer.Stop()
+		client.reconnectTimer = nil
 	}
+
+	client.closeGRPCConnection()
+
+	log.Debug("Disconnected from IAM")
 
 	return nil
 }
 
 // GetNodeID returns node ID.
 func (client *Client) GetNodeID() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), iamRequestTimeout)
-	defer cancel()
-
-	response, err := client.service.GetNodeInfo(ctx, &empty.Empty{})
+	response, err := client.GetCurrentNodeInfo()
 	if err != nil {
 		return "", aoserrors.Wrap(err)
 	}
 
-	log.WithFields(log.Fields{"nodeID": response.GetNodeId(), "nodeType": response.GetNodeType()}).Debug("Get node info")
+	log.WithFields(log.Fields{"nodeID": response.NodeID, "nodeType": response.NodeType}).Debug("Get node info")
 
-	return response.GetNodeId(), nil
+	return response.NodeID, nil
 }
 
-// GetCertificate gets certificate by issuer.
-func (client *Client) GetCertificate(cerType string) (certURL, keyURL string, err error) {
-	log.WithFields(log.Fields{"type": cerType}).Debug("Get certificate")
-
-	ctx, cancel := context.WithTimeout(context.Background(), iamRequestTimeout)
-	defer cancel()
-
-	response, err := client.service.GetCert(ctx, &pb.GetCertRequest{Type: cerType})
-	if err != nil {
-		return "", "", aoserrors.Wrap(err)
+func (client *Client) OnConnectionLost() {
+	if !client.disableReconnect {
+		client.reconnectChannel <- struct{}{}
 	}
-
-	log.WithFields(log.Fields{
-		"certURL": response.GetCertUrl(), "keyURL": response.GetKeyUrl(),
-	}).Debug("Certificate info")
-
-	return response.GetCertUrl(), response.GetKeyUrl(), nil
 }
 
 /***********************************************************************************************************************
  * Private
  **********************************************************************************************************************/
 
-func (client *Client) createConnection(
-	cryptocontext *cryptutils.CryptoContext, serverURL string, insecureCon bool,
-) (connection *grpc.ClientConn, pbPublic pb.IAMPublicServiceClient, err error) {
+func (client *Client) openGRPCConnection() (err error) {
 	log.Debug("Connecting to IAM...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), iamRequestTimeout)
-	defer cancel()
-
-	var secureOpt grpc.DialOption
-
-	if insecureCon {
-		secureOpt = grpc.WithTransportCredentials(insecure.NewCredentials())
-	} else {
-		if cryptocontext == nil {
-			return nil, nil, aoserrors.New("cryptocontext must not be nil")
-		}
-
-		tlsConfig, err := cryptocontext.GetClientTLSConfig()
-		if err != nil {
-			return nil, nil, aoserrors.Wrap(err)
-		}
-
-		secureOpt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
+	if client.connection, err = grpchelpers.CreatePublicConnection(
+		client.config.IAMPublicServerURL, iamRequestTimeout, client.cryptocontext, client.insecure); err != nil {
+		return aoserrors.Wrap(err)
 	}
 
-	if connection, err = grpc.DialContext(ctx, serverURL,
-		secureOpt, grpc.WithBlock()); err != nil {
-		return nil, nil, aoserrors.Wrap(err)
-	}
-
-	pbPublic = pb.NewIAMPublicServiceClient(connection)
+	client.RegisterIAMPublicServiceClient(client.connection, client)
 
 	log.Debug("Connected to IAM")
 
-	return connection, pbPublic, nil
+	return nil
+}
+
+func (client *Client) closeGRPCConnection() {
+	log.Debug("Closing IAM connection...")
+
+	if client.connection != nil {
+		client.connection.Close()
+		client.connection = nil
+	}
+
+	client.WaitIAMPublicServiceClient()
+}
+
+func (client *Client) processEvents() {
+	for {
+		select {
+		case <-client.closeChannel:
+			return
+
+		case <-client.tlsCertChan:
+			client.Lock()
+			client.reconnect()
+			client.Unlock()
+
+		case <-client.reconnectChannel:
+			client.Lock()
+			client.reconnect()
+			client.Unlock()
+		}
+	}
+}
+
+func (client *Client) reconnect() {
+	if client.disableReconnect {
+		return
+	}
+
+	log.Debug("Reconnecting to IAM server...")
+
+	client.disableReconnect = true
+	client.closeGRPCConnection()
+
+	if err := client.openGRPCConnection(); err != nil {
+		log.WithField("err", err).Error("Reconnection to IAM failed")
+
+		client.reconnectTimer = time.AfterFunc(iamReconnectInterval, func() {
+			client.Lock()
+			defer client.Unlock()
+
+			client.reconnectTimer = nil
+
+			client.reconnect()
+		})
+	} else {
+		client.disableReconnect = false
+	}
 }

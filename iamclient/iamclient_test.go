@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/aosedge/aos_common/aoserrors"
+	"github.com/aosedge/aos_common/api/iamanager"
 	pb "github.com/aosedge/aos_common/api/iamanager"
 	"github.com/golang/protobuf/ptypes/empty"
 	log "github.com/sirupsen/logrus"
@@ -129,7 +130,7 @@ func TestGetCertificates(t *testing.T) {
 	}
 	defer client.Close()
 
-	certURL, keyURL, err := client.GetCertificate("um")
+	certURL, keyURL, err := client.GetCertificate("um", nil, "")
 	if err != nil {
 		t.Fatalf("Can't get um certificate: %s", err)
 	}
@@ -178,8 +179,8 @@ func (server *testServer) GetNodeInfo(context context.Context, req *empty.Empty)
 	return &pb.NodeInfo{NodeId: server.nodeID}, nil
 }
 
-func (server *testServer) GetCert(context context.Context, req *pb.GetCertRequest) (*pb.GetCertResponse, error) {
-	rsp := &pb.GetCertResponse{Type: req.GetType()}
+func (server *testServer) GetCert(context context.Context, req *pb.GetCertRequest) (*iamanager.CertInfo, error) {
+	rsp := &iamanager.CertInfo{Type: req.GetType()}
 
 	if req.GetType() != server.certURL.certType {
 		return rsp, aoserrors.New("not found")
