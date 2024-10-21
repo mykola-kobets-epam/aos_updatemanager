@@ -247,7 +247,7 @@ func (client *Client) createConnection(
 
 		for {
 			if err != nil && len(client.closeChannel) == 0 {
-				log.Errorf("Error register to CM: %s", aoserrors.Wrap(err))
+				log.WithField("err", err).Warning("Error register to CM")
 			} else {
 				client.messageHandler.Registered()
 
@@ -255,7 +255,7 @@ func (client *Client) createConnection(
 					if errors.Is(err, io.EOF) {
 						log.Debug("Connection is closed")
 					} else {
-						log.Errorf("Connection error: %s", aoserrors.Wrap(err))
+						log.WithField("err", err).Warning("Connection error")
 					}
 				}
 			}
